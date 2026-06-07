@@ -1,8 +1,15 @@
 """Blur detection model training script.
 
 Usage:
-    python train.py --config model/config.py
-    python train.py --data-dir data/datasets --epochs 50 --lr 1e-3
+    python train.py --data-dir data/datasets --epochs 100 --backbone mobilenet_v3_large
+
+Key improvements for high accuracy:
+    - Label smoothing for better generalization
+    - Mixup augmentation for regularization
+    - More aggressive data augmentation (RandomAffine, GaussianBlur, RandomErasing)
+    - OneCycleLR scheduler for faster convergence
+    - Gradient clipping for training stability
+    - Larger model backbone option (mobilenet_v3_large)
 """
 
 import argparse
@@ -18,7 +25,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, OneCycleLR
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
@@ -37,21 +44,44 @@ def set_seed(seed: int):
 
 
 def get_transforms(cfg: Config, is_train: bool):
-    """Get data transforms for training or validation."""
+    """Get data transforms for training or validation.
+
+    Training augmentation pipeline includes:
+    - Random resized crop with scale variation
+    - Random horizontal/vertical flips
+    - Random rotation
+    - Color jitter (brightness, contrast, saturation, hue)
+    - Random affine transforms
+    - Random perspective distortion
+    - Gaussian blur augmentation
+    - Random erasing (cutout)
+    - ImageNet normalization
+    """
     if is_train:
         return transforms.Compose([
-            transforms.Resize((cfg.image_size, cfg.image_size)),
+            transforms.Resize((cfg.image_size + 32, cfg.image_size + 32)),
+            transforms.RandomCrop(cfg.image_size),
             transforms.RandomHorizontalFlip(p=cfg.random_horizontal_flip),
+            transforms.RandomVerticalFlip(p=0.2),
             transforms.RandomRotation(cfg.random_rotation),
+            transforms.RandomAffine(
+                degrees=15,
+                translate=(0.1, 0.1),
+                scale=(0.9, 1.1),
+                shear=5,
+            ),
+            transforms.RandomPerspective(distortion_scale=0.15, p=0.3),
             transforms.ColorJitter(
                 brightness=cfg.color_jitter_brightness,
                 contrast=cfg.color_jitter_contrast,
                 saturation=cfg.color_jitter_saturation,
                 hue=cfg.color_jitter_hue,
             ),
+            transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225]),
+            transforms.RandomErasing(p=0.2, scale=(0.02, 0.15), ratio=(0.3, 3.3)),
         ])
     else:
         return transforms.Compose([
@@ -82,7 +112,6 @@ def get_dataloaders(cfg: Config):
     print(f"Validation samples: {len(val_dataset)}")
 
     # On macOS, use 0 workers to avoid "Too many open files" errors
-    # MPS backend doesn't benefit much from multiprocessing data loading
     import platform
     num_workers = 0 if platform.system() == "Darwin" else cfg.num_workers
 
@@ -92,6 +121,7 @@ def get_dataloaders(cfg: Config):
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
+        drop_last=True,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -107,7 +137,7 @@ def get_dataloaders(cfg: Config):
 class EarlyStopping:
     """Early stopping to prevent overfitting."""
 
-    def __init__(self, patience: int = 10, min_delta: float = 0.001):
+    def __init__(self, patience: int = 15, min_delta: float = 0.0005):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
@@ -127,8 +157,41 @@ class EarlyStopping:
         return self.should_stop
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device):
-    """Train for one epoch."""
+def mixup_data(x, y, alpha=0.2):
+    """Apply mixup augmentation.
+
+    Mixup creates virtual training examples by linearly interpolating
+    between pairs of input images and their labels.
+
+    Args:
+        x: Input batch tensor.
+        y: Label batch tensor.
+        alpha: Mixup interpolation parameter (higher = more mixing).
+
+    Returns:
+        Mixed inputs, original labels, shuffled labels, and lambda.
+    """
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.0
+
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size, device=x.device)
+
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    """Compute mixup loss."""
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device,
+                    scheduler=None, use_mixup=True, mixup_alpha=0.2, grad_clip=1.0):
+    """Train for one epoch with optional mixup and gradient clipping."""
     model.train()
     running_loss = 0.0
     correct = 0
@@ -139,14 +202,31 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
         inputs, labels = inputs.to(device), labels.to(device)
 
         optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
+
+        if use_mixup:
+            inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, mixup_alpha)
+            outputs = model(inputs)
+            loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
+        else:
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
         loss.backward()
+
+        # Gradient clipping for training stability
+        if grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+
         optimizer.step()
+
+        # Step scheduler per batch (required for OneCycleLR)
+        if scheduler is not None:
+            scheduler.step()
 
         running_loss += loss.item() * inputs.size(0)
         _, predicted = outputs.max(1)
         total += labels.size(0)
+        # For mixup, use original labels for accuracy tracking
         correct += predicted.eq(labels).sum().item()
 
         pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{100.0 * correct / total:.1f}%")
@@ -180,17 +260,27 @@ def main():
     parser = argparse.ArgumentParser(description="Train blur detection model")
     parser.add_argument("--data-dir", default="data/datasets",
                         help="Dataset root directory")
-    parser.add_argument("--backbone", default="mobilenet_v3_small",
+    parser.add_argument("--backbone", default="mobilenet_v3_large",
                         choices=["mobilenet_v3_small", "mobilenet_v3_large"])
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--image-size", type=int, default=224)
+    parser.add_argument("--lr", type=float, default=3e-3)
+    parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", default="output")
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume training from")
+    parser.add_argument("--label-smoothing", type=float, default=0.1,
+                        help="Label smoothing factor (default: 0.1)")
+    parser.add_argument("--mixup-alpha", type=float, default=0.2,
+                        help="Mixup alpha parameter (default: 0.2, 0 to disable)")
+    parser.add_argument("--grad-clip", type=float, default=1.0,
+                        help="Gradient clipping max norm (default: 1.0)")
+    parser.add_argument("--warmup-epochs", type=int, default=10,
+                        help="Number of warmup epochs (default: 10)")
+    parser.add_argument("--patience", type=int, default=20,
+                        help="Early stopping patience (default: 20)")
     args = parser.parse_args()
 
     # Configuration
@@ -204,6 +294,8 @@ def main():
         image_size=args.image_size,
         seed=args.seed,
         output_dir=args.output_dir,
+        warmup_epochs=args.warmup_epochs,
+        early_stopping_patience=args.patience,
     )
 
     set_seed(cfg.seed)
@@ -249,29 +341,40 @@ def main():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
 
-    # Loss, optimizer, scheduler
-    criterion = nn.CrossEntropyLoss()
+    # Loss with label smoothing
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    print(f"Label smoothing: {args.label_smoothing}")
+
+    # Optimizer with higher learning rate for larger model
     optimizer = optim.AdamW(model.parameters(), lr=cfg.learning_rate,
                             weight_decay=cfg.weight_decay)
 
-    if cfg.lr_scheduler == "cosine":
-        scheduler = CosineAnnealingLR(optimizer, T_max=cfg.num_epochs - cfg.warmup_epochs)
-    else:
-        scheduler = StepLR(optimizer, step_size=15, gamma=0.1)
-
-    # Warmup: linear lr increase for first few epochs
-    warmup_scheduler = None
-    if cfg.warmup_epochs > 0:
-        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-            optimizer, start_factor=0.1, total_iters=cfg.warmup_epochs
-        )
+    # OneCycleLR scheduler - more aggressive but effective
+    steps_per_epoch = len(train_loader)
+    scheduler = OneCycleLR(
+        optimizer,
+        max_lr=cfg.learning_rate,
+        epochs=cfg.num_epochs,
+        steps_per_epoch=steps_per_epoch,
+        pct_start=0.1,  # 10% warmup
+        anneal_strategy='cos',
+        div_factor=25,  # initial_lr = max_lr / 25
+        final_div_factor=1000,  # final_lr = initial_lr / 1000
+    )
 
     early_stopping = EarlyStopping(patience=cfg.early_stopping_patience)
 
     # Training loop
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "lr": []}
 
-    print(f"\nStarting training for {cfg.num_epochs} epochs (from epoch {start_epoch})...")
+    print(f"\nTraining config:")
+    print(f"  Epochs: {cfg.num_epochs}")
+    print(f"  Batch size: {cfg.batch_size}")
+    print(f"  Image size: {cfg.image_size}")
+    print(f"  Learning rate: {cfg.learning_rate}")
+    print(f"  Mixup alpha: {args.mixup_alpha}")
+    print(f"  Gradient clip: {args.grad_clip}")
+    print(f"  Patience: {cfg.early_stopping_patience}")
     print("=" * 60)
 
     for epoch in range(start_epoch, cfg.num_epochs):
@@ -280,14 +383,14 @@ def main():
         print(f"\nEpoch {epoch + 1}/{cfg.num_epochs}")
         print(f"LR: {optimizer.param_groups[0]['lr']:.6f}")
 
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, criterion, optimizer, device,
+            scheduler=scheduler,
+            use_mixup=args.mixup_alpha > 0,
+            mixup_alpha=args.mixup_alpha,
+            grad_clip=args.grad_clip,
+        )
         val_loss, val_acc = validate(model, val_loader, criterion, device)
-
-        # Update scheduler
-        if warmup_scheduler and epoch < cfg.warmup_epochs:
-            warmup_scheduler.step()
-        else:
-            scheduler.step()
 
         elapsed = time.time() - epoch_start
 
