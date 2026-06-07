@@ -79,7 +79,7 @@ if(BLUR_DETECTION_ENABLE_ONNX)
             set(ORT_LIB_EXT "dll")
         endif()
 
-        set(ORT_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/include")
+        set(ORT_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/include/onnxruntime")
         set(ORT_LIB_DIR "${ONNXRUNTIME_ROOT}/lib")
 
         add_library(onnxruntime SHARED IMPORTED)

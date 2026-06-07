@@ -18,7 +18,7 @@ void printUsage(const char* prog) {
               << "  --json              Output results as JSON\n"
               << "  --help              Show this help\n"
               << "\nBlur Classes:\n"
-              << "  0 = sharp, 1 = motion_blur, 2 = defocus_blur, 3 = gaussian_blur\n";
+              << "  0 = defocus_blur, 1 = gaussian_blur, 2 = motion_blur, 3 = sharp\n";
 }
 
 void printResult(const std::string& image_path, const blur::BlurResult& result, bool json) {

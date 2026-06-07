@@ -11,11 +11,12 @@
 namespace blur {
 
 /// Blur classification categories.
+/// Order matches ImageFolder alphabetical sorting (used during training).
 enum class BlurClass : int {
-    kSharp       = 0,
-    kMotionBlur  = 1,
-    kDefocusBlur = 2,
-    kGaussianBlur = 3,
+    kDefocusBlur = 0,
+    kGaussianBlur = 1,
+    kMotionBlur  = 2,
+    kSharp       = 3,
     kCount       = 4
 };
 

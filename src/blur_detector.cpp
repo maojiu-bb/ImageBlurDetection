@@ -12,10 +12,10 @@ namespace blur {
 
 const char* blurClassName(BlurClass cls) {
     switch (cls) {
-        case BlurClass::kSharp:        return "sharp";
-        case BlurClass::kMotionBlur:   return "motion_blur";
         case BlurClass::kDefocusBlur:  return "defocus_blur";
         case BlurClass::kGaussianBlur: return "gaussian_blur";
+        case BlurClass::kMotionBlur:   return "motion_blur";
+        case BlurClass::kSharp:        return "sharp";
         default:                       return "unknown";
     }
 }

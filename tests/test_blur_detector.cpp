@@ -143,17 +143,17 @@ TEST(ImageProcessorTest, ResizeInvalidInput) {
 // ── BlurClass Tests ─────────────────────────────────────
 
 TEST(BlurClassTest, ClassNames) {
-    EXPECT_STREQ(blur::blurClassName(blur::BlurClass::kSharp), "sharp");
-    EXPECT_STREQ(blur::blurClassName(blur::BlurClass::kMotionBlur), "motion_blur");
     EXPECT_STREQ(blur::blurClassName(blur::BlurClass::kDefocusBlur), "defocus_blur");
     EXPECT_STREQ(blur::blurClassName(blur::BlurClass::kGaussianBlur), "gaussian_blur");
+    EXPECT_STREQ(blur::blurClassName(blur::BlurClass::kMotionBlur), "motion_blur");
+    EXPECT_STREQ(blur::blurClassName(blur::BlurClass::kSharp), "sharp");
 }
 
 TEST(BlurClassTest, ClassEnumValues) {
-    EXPECT_EQ(static_cast<int>(blur::BlurClass::kSharp), 0);
-    EXPECT_EQ(static_cast<int>(blur::BlurClass::kMotionBlur), 1);
-    EXPECT_EQ(static_cast<int>(blur::BlurClass::kDefocusBlur), 2);
-    EXPECT_EQ(static_cast<int>(blur::BlurClass::kGaussianBlur), 3);
+    EXPECT_EQ(static_cast<int>(blur::BlurClass::kDefocusBlur), 0);
+    EXPECT_EQ(static_cast<int>(blur::BlurClass::kGaussianBlur), 1);
+    EXPECT_EQ(static_cast<int>(blur::BlurClass::kMotionBlur), 2);
+    EXPECT_EQ(static_cast<int>(blur::BlurClass::kSharp), 3);
     EXPECT_EQ(static_cast<int>(blur::BlurClass::kCount), 4);
 }
 
