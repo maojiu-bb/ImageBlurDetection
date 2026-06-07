@@ -4,10 +4,11 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
+
+#include "blur_detection/inference_engine.h"
 
 namespace blur {
-
-class InferenceEngine;
 
 /// Blur classification categories.
 enum class BlurClass : int {

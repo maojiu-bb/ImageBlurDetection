@@ -135,6 +135,7 @@ add_compile_definitions(
 set(BLUR_LIB_SOURCES
     src/image_processor.cpp
     src/blur_detector.cpp
+    src/inference_engine.cpp
 )
 set(BLUR_LIB_HEADERS
     include/blur_detection/inference_engine.h
