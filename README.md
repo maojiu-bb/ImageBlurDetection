@@ -21,8 +21,8 @@ cd training
 # 安装依赖
 pip install -r requirements.txt
 
-# 准备数据集（合成模糊图像）
-python data/prepare_dataset.py --source <清晰图片目录> --output data/datasets
+# 准备数据集（合成模糊图像，每张源图生成 10 个模糊变体）
+python data/prepare_dataset.py --source data/sharp_images --output data/datasets --variants 10
 
 # 训练
 python train.py --data-dir data/datasets --epochs 50
