@@ -208,10 +208,13 @@ def main():
     # Load model
     print(f"Loading model from {args.model}...")
     checkpoint = torch.load(args.model, map_location=device, weights_only=False)
+    model_config = checkpoint.get("config", {})
+    backbone = model_config.get("backbone", args.backbone)
+    print(f"  Backbone: {backbone}")
 
     model = build_model(
         num_classes=4,
-        backbone=args.backbone,
+        backbone=backbone,
         pretrained=False,
     )
     model.load_state_dict(checkpoint["model_state_dict"])

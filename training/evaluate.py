@@ -126,10 +126,13 @@ def main():
     checkpoint = torch.load(args.model, map_location=device, weights_only=False)
     model_config = checkpoint.get("config", {})
 
+    # Use backbone from checkpoint if available, otherwise from args
+    backbone = model_config.get("backbone", args.backbone)
+
     # Build model
     model = build_model(
         num_classes=4,
-        backbone=args.backbone,
+        backbone=backbone,
         pretrained=False,
     )
     model.load_state_dict(checkpoint["model_state_dict"])
