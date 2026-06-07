@@ -17,13 +17,6 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-*.pth
-*.pt
-
-# Model files (large, don't commit)
-models/*.tflite
-models/*.onnx
-models/*.bin
 
 # Dataset
 training/data/datasets/
