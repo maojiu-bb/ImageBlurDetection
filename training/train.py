@@ -81,18 +81,23 @@ def get_dataloaders(cfg: Config):
     print(f"Training samples: {len(train_dataset)}")
     print(f"Validation samples: {len(val_dataset)}")
 
+    # On macOS, use 0 workers to avoid "Too many open files" errors
+    # MPS backend doesn't benefit much from multiprocessing data loading
+    import platform
+    num_workers = 0 if platform.system() == "Darwin" else cfg.num_workers
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
-        num_workers=cfg.num_workers,
+        num_workers=num_workers,
         pin_memory=True,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=cfg.batch_size,
         shuffle=False,
-        num_workers=cfg.num_workers,
+        num_workers=num_workers,
         pin_memory=True,
     )
 
@@ -184,6 +189,8 @@ def main():
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", default="output")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to checkpoint to resume training from")
     args = parser.parse_args()
 
     # Configuration
@@ -222,6 +229,20 @@ def main():
         dropout=cfg.dropout,
     ).to(device)
 
+    # Resume from checkpoint if specified
+    start_epoch = 0
+    best_val_acc = 0.0
+    if args.resume:
+        if os.path.exists(args.resume):
+            print(f"Resuming from checkpoint: {args.resume}")
+            checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            start_epoch = checkpoint.get("epoch", 0) + 1
+            best_val_acc = checkpoint.get("val_acc", 0.0)
+            print(f"  Resumed from epoch {start_epoch}, best_val_acc={best_val_acc:.4f}")
+        else:
+            print(f"Warning: checkpoint not found at {args.resume}, starting from scratch")
+
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model: {cfg.backbone}")
@@ -248,13 +269,12 @@ def main():
     early_stopping = EarlyStopping(patience=cfg.early_stopping_patience)
 
     # Training loop
-    best_val_acc = 0.0
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "lr": []}
 
-    print(f"\nStarting training for {cfg.num_epochs} epochs...")
+    print(f"\nStarting training for {cfg.num_epochs} epochs (from epoch {start_epoch})...")
     print("=" * 60)
 
-    for epoch in range(cfg.num_epochs):
+    for epoch in range(start_epoch, cfg.num_epochs):
         epoch_start = time.time()
 
         print(f"\nEpoch {epoch + 1}/{cfg.num_epochs}")

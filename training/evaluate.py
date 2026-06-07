@@ -138,7 +138,10 @@ def main():
     # Data
     data_dir = os.path.join(args.data_dir, args.split)
     dataset = datasets.ImageFolder(data_dir, transform=get_transforms(args.image_size))
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    # On macOS, use 0 workers to avoid "Too many open files" errors
+    import platform
+    num_workers = 0 if platform.system() == "Darwin" else 4
+    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=num_workers)
 
     class_names = dataset.classes
     print(f"Evaluating on {args.split} set ({len(dataset)} samples)")
