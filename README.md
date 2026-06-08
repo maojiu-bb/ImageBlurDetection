@@ -89,7 +89,7 @@ photo.jpg: motion_blur (confidence: 96.16%) [0.013, 0.013, 0.962, 0.013]
 使用 [onnxruntime-swift](https://github.com/microsoft/onnxruntime) 官方库：
 
 ```swift
-import OnnxRuntimeBindings
+import onnxruntime_objc
 
 class BlurDetector {
     private var session: ORTSession?
@@ -102,7 +102,7 @@ class BlurDetector {
         session = try ORTSession(env: env, modelPath: modelPath, sessionOptions: options)
     }
     
-    func detect(image: CGImage) throws -> (className: String, confidence: Float) {
+    func detect(image: CGImage) throws -> (className: String, confidence: Float, probabilities: [Float]) {
         // 1. 预处理: resize 到 224x224, 转换为 CHW float32, ImageNet 归一化
         let inputData = preprocessImage(image)
         
@@ -134,18 +134,48 @@ class BlurDetector {
         
         let maxIndex = probs.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
         
-        return (classes[maxIndex], probs[maxIndex])
+        return (classes[maxIndex], probs[maxIndex], probs)
     }
     
     private func preprocessImage(_ image: CGImage) -> Data {
-        // Resize 到 224x224
-        // 转换为 RGB
-        // HWC -> CHW
-        // 归一化: (pixel/255 - mean) / std
-        // mean = [0.485, 0.456, 0.406]
-        // std = [0.229, 0.224, 0.225]
-        // ... 实现省略
-        return Data()
+        let width = 224
+        let height = 224
+        
+        // 1. 绘制到 224x224 RGB 画布
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil,
+                  width: width, height: height,
+                  bitsPerComponent: 8,
+                  bytesPerRow: width * 4,
+                  space: colorSpace,
+                  bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue |
+                      CGImageAlphaInfo.noneSkipFirst.rawValue
+              ) else {
+            return Data()
+        }
+        
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        
+        guard let pixelData = context.data else { return Data() }
+        let pixels = pixelData.bindMemory(to: UInt8.self, capacity: width * height * 4)
+        
+        // 2. HWC -> CHW + ImageNet 归一化
+        let mean: [Float] = [0.485, 0.456, 0.406]
+        let std: [Float] = [0.229, 0.224, 0.225]
+        let channelSize = width * height
+        
+        var floatData = [Float](repeating: 0, count: 3 * channelSize)
+        for i in 0..<channelSize {
+            let offset = i * 4  // BGRA 布局
+            for c in 0..<3 {
+                let pixel = Float(pixels[offset + c]) / 255.0
+                floatData[c * channelSize + i] = (pixel - mean[c]) / std[c]
+            }
+        }
+        
+        return Data(bytes: floatData, count: floatData.count * MemoryLayout<Float>.stride)
     }
 }
 
@@ -159,6 +189,7 @@ print("检测结果: \(result.className), 置信度: \(result.confidence)")
 ```ruby
 pod 'onnxruntime-objc', '~> 1.16'
 ```
+Swift 中 `import onnxruntime_objc`，Objective-C 中 `#import <onnxruntime_objc/onnxruntime_objc.h>`。
 
 **Swift Package Manager:**
 ```swift
@@ -172,7 +203,7 @@ dependencies: [
 ### iOS / macOS (Objective-C)
 
 ```objectivec
-#import <OnnxRuntime/OnnxRuntime.h>
+#import <onnxruntime_objc/onnxruntime_objc.h>
 
 @interface BlurDetector : NSObject
 - (instancetype)initWithModelPath:(NSString *)modelPath error:(NSError **)error;
@@ -213,7 +244,7 @@ dependencies: [
                                                                 outputNames:@[@"output"]
                                                                       error:error];
     
-    // 4. 解析输出
+    // 4. 解析输出（模型输出已是 softmax 概率）
     ORTValue *outputTensor = outputs[@"output"];
     NSData *outputData = [outputTensor tensorDataWithError:error];
     const float *probs = (const float *)outputData.bytes;
@@ -233,6 +264,50 @@ dependencies: [
         @"confidence": @(maxProb),
         @"probabilities": @[@(probs[0]), @(probs[1]), @(probs[2]), @(probs[3])]
     };
+}
+
+- (NSData *)preprocessImage:(CGImageRef)image {
+    const int width = 224;
+    const int height = 224;
+    
+    // 1. 绘制到 224x224 RGB 画布
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef context = CGBitmapContextCreate(
+        NULL, width, height, 8, width * 4,
+        colorSpace,
+        kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst
+    );
+    CGColorSpaceRelease(colorSpace);
+    
+    if (!context) return [NSData data];
+    
+    CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
+    
+    const uint8_t *pixels = CGBitmapContextGetData(context);
+    if (!pixels) {
+        CGContextRelease(context);
+        return [NSData data];
+    }
+    
+    // 2. HWC -> CHW + ImageNet 归一化
+    const float mean[3] = {0.485f, 0.456f, 0.406f};
+    const float std[3]  = {0.229f, 0.224f, 0.225f};
+    const int channelSize = width * height;
+    
+    NSMutableData *outputData = [NSMutableData dataWithLength:3 * channelSize * sizeof(float)];
+    float *floatBuffer = (float *)outputData.mutableBytes;
+    
+    for (int i = 0; i < channelSize; i++) {
+        int offset = i * 4;  // BGRA 布局
+        for (int c = 0; c < 3; c++) {
+            float pixel = pixels[offset + c] / 255.0f;
+            floatBuffer[c * channelSize + i] = (pixel - mean[c]) / std[c];
+        }
+    }
+    
+    CGContextRelease(context);
+    return outputData;
 }
 
 @end
