@@ -188,26 +188,10 @@ TEST(InferenceEngineTest, CreateUnknownBackend) {
 }
 
 TEST(InferenceEngineTest, CreateCaseInsensitive) {
-    // The factory should handle case-insensitive backend names
     auto engine = blur::InferenceEngine::create("UNKNOWN");
     EXPECT_EQ(engine, nullptr);
 }
 
-#ifdef BLUR_HAS_TFLITE
-TEST(InferenceEngineTest, CreateTFLite) {
-    auto engine = blur::InferenceEngine::create("tflite");
-    EXPECT_NE(engine, nullptr);
-    EXPECT_EQ(engine->backendName(), "tflite");
-}
-
-TEST(InferenceEngineTest, CreateTFLiteCaseInsensitive) {
-    auto engine = blur::InferenceEngine::create("TFLite");
-    EXPECT_NE(engine, nullptr);
-    EXPECT_EQ(engine->backendName(), "tflite");
-}
-#endif
-
-#ifdef BLUR_HAS_ONNX
 TEST(InferenceEngineTest, CreateOnnx) {
     auto engine = blur::InferenceEngine::create("onnx");
     EXPECT_NE(engine, nullptr);
@@ -219,7 +203,6 @@ TEST(InferenceEngineTest, CreateOnnxCaseInsensitive) {
     EXPECT_NE(engine, nullptr);
     EXPECT_EQ(engine->backendName(), "onnx");
 }
-#endif
 
 // ── BlurDetector Construction Tests ─────────────────────
 

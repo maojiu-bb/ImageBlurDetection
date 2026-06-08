@@ -1,5 +1,3 @@
-#ifdef BLUR_HAS_ONNX
-
 #include "blur_detection/onnx_engine.h"
 
 #include <iostream>
@@ -107,5 +105,3 @@ std::vector<int64_t> OnnxEngine::getOutputShape() const {
 }
 
 }  // namespace blur
-
-#endif  // BLUR_HAS_ONNX

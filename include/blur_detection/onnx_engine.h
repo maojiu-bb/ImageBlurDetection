@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef BLUR_HAS_ONNX
-
 #include "blur_detection/inference_engine.h"
 
 #include <onnxruntime_cxx_api.h>
@@ -36,5 +34,3 @@ private:
 };
 
 }  // namespace blur
-
-#endif  // BLUR_HAS_ONNX
