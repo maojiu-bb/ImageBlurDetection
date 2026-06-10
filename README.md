@@ -8,7 +8,7 @@
 |------|------|
 | **Backbone** | MobileNetV3-Large (~5.4M 参数) |
 | **输入** | 224×224 RGB 图像，ImageNet 归一化 |
-| **输出** | 4 类 softmax 概率 |
+| **输出** | 4 类 logits（推理端执行 softmax） |
 | **准确率** | 验证集 98.84%，测试集 97.80% (TTA) |
 | **模型格式** | ONNX (12MB) |
 
@@ -21,7 +21,7 @@
 | 2 | motion_blur | 运动模糊（相机/物体移动） |
 | 3 | sharp | 清晰图像 |
 
-> ⚠️ 类别顺序按 ImageFolder 字母排序，与模型输出索引对应。
+> ⚠️ 类别顺序按 `torchvision.datasets.ImageFolder` 字母排序，与模型输出索引对应。不要按业务展示顺序重排。
 
 ---
 
@@ -58,27 +58,32 @@ brew install onnxruntime
 cmake -B build -DONNXRUNTIME_ROOT=/opt/homebrew/opt/onnxruntime
 cmake --build build
 
-# 运行
-./build/blur_detection --model models/blur_detector.onnx --backend onnx --input photo.jpg
+# 运行（backend 默认是 onnx）
+./build/blur_detection --model models/blur_detector.onnx --input photo.jpg
+
+# 跑单元测试
+ctest --test-dir build --output-on-failure
 ```
 
 ### 3. CLI 用法
 
 ```bash
 # 单图检测
-./build/blur_detection --model models/blur_detector.onnx --backend onnx --input photo.jpg
+./build/blur_detection --model models/blur_detector.onnx --input photo.jpg
 
 # 批量检测
-./build/blur_detection --model models/blur_detector.onnx --backend onnx --input ./photos/
+./build/blur_detection --model models/blur_detector.onnx --input ./photos/
 
 # JSON 输出
-./build/blur_detection --model models/blur_detector.onnx --backend onnx --input photo.jpg --json
+./build/blur_detection --model models/blur_detector.onnx --input photo.jpg --json
 ```
 
 输出示例：
 ```
 photo.jpg: motion_blur (confidence: 96.16%) [0.013, 0.013, 0.962, 0.013]
 ```
+
+概率数组顺序为 `[defocus_blur, gaussian_blur, motion_blur, sharp]`。
 
 ---
 
@@ -119,16 +124,16 @@ class BlurDetector {
             outputNames: ["output"]
         )
         
-        // 4. 获取结果
+        // 4. 获取 logits
         let outputTensor = outputs?["output"]
         let outputData = try outputTensor?.tensorData() as Data?
-        let probabilities = outputData?.withUnsafeBytes {
+        let logits = outputData?.withUnsafeBytes {
             Array($0.bindMemory(to: Float.self))
         } ?? []
         
         // 5. Softmax + argmax
-        let maxVal = probabilities.max() ?? 0
-        let expValues = probabilities.map { exp($0 - maxVal) }
+        let maxVal = logits.max() ?? 0
+        let expValues = logits.map { exp($0 - maxVal) }
         let sum = expValues.reduce(0, +)
         let probs = expValues.map { $0 / sum }
         
@@ -161,7 +166,7 @@ class BlurDetector {
         guard let pixelData = context.data else { return Data() }
         let pixels = pixelData.bindMemory(to: UInt8.self, capacity: width * height * 4)
         
-        // 2. HWC -> CHW + ImageNet 归一化
+        // 2. BGRA -> RGB, HWC -> CHW + ImageNet 归一化
         let mean: [Float] = [0.485, 0.456, 0.406]
         let std: [Float] = [0.229, 0.224, 0.225]
         let channelSize = width * height
@@ -169,10 +174,12 @@ class BlurDetector {
         var floatData = [Float](repeating: 0, count: 3 * channelSize)
         for i in 0..<channelSize {
             let offset = i * 4  // BGRA 布局
-            for c in 0..<3 {
-                let pixel = Float(pixels[offset + c]) / 255.0
-                floatData[c * channelSize + i] = (pixel - mean[c]) / std[c]
-            }
+            let r = Float(pixels[offset + 2]) / 255.0
+            let g = Float(pixels[offset + 1]) / 255.0
+            let b = Float(pixels[offset + 0]) / 255.0
+            floatData[0 * channelSize + i] = (r - mean[0]) / std[0]
+            floatData[1 * channelSize + i] = (g - mean[1]) / std[1]
+            floatData[2 * channelSize + i] = (b - mean[2]) / std[2]
         }
         
         return Data(bytes: floatData, count: floatData.count * MemoryLayout<Float>.stride)
@@ -204,6 +211,7 @@ dependencies: [
 
 ```objectivec
 #import <onnxruntime_objc/onnxruntime_objc.h>
+#import <math.h>
 
 @interface BlurDetector : NSObject
 - (instancetype)initWithModelPath:(NSString *)modelPath error:(NSError **)error;
@@ -244,10 +252,27 @@ dependencies: [
                                                                 outputNames:@[@"output"]
                                                                       error:error];
     
-    // 4. 解析输出（模型输出已是 softmax 概率）
+    // 4. 解析 logits 并执行 softmax
     ORTValue *outputTensor = outputs[@"output"];
     NSData *outputData = [outputTensor tensorDataWithError:error];
-    const float *probs = (const float *)outputData.bytes;
+    const float *logits = (const float *)outputData.bytes;
+
+    float maxVal = logits[0];
+    for (int i = 1; i < 4; i++) {
+        if (logits[i] > maxVal) {
+            maxVal = logits[i];
+        }
+    }
+
+    float probs[4];
+    float sum = 0.0f;
+    for (int i = 0; i < 4; i++) {
+        probs[i] = expf(logits[i] - maxVal);
+        sum += probs[i];
+    }
+    for (int i = 0; i < 4; i++) {
+        probs[i] /= sum;
+    }
     
     // 5. 找到最大概率
     int maxIdx = 0;
@@ -290,7 +315,7 @@ dependencies: [
         return [NSData data];
     }
     
-    // 2. HWC -> CHW + ImageNet 归一化
+    // 2. BGRA -> RGB, HWC -> CHW + ImageNet 归一化
     const float mean[3] = {0.485f, 0.456f, 0.406f};
     const float std[3]  = {0.229f, 0.224f, 0.225f};
     const int channelSize = width * height;
@@ -300,10 +325,12 @@ dependencies: [
     
     for (int i = 0; i < channelSize; i++) {
         int offset = i * 4;  // BGRA 布局
-        for (int c = 0; c < 3; c++) {
-            float pixel = pixels[offset + c] / 255.0f;
-            floatBuffer[c * channelSize + i] = (pixel - mean[c]) / std[c];
-        }
+        float r = pixels[offset + 2] / 255.0f;
+        float g = pixels[offset + 1] / 255.0f;
+        float b = pixels[offset + 0] / 255.0f;
+        floatBuffer[0 * channelSize + i] = (r - mean[0]) / std[0];
+        floatBuffer[1 * channelSize + i] = (g - mean[1]) / std[1];
+        floatBuffer[2 * channelSize + i] = (b - mean[2]) / std[2];
     }
     
     CGContextRelease(context);
@@ -427,6 +454,8 @@ dependencies:
 **blur_detector.dart:**
 ```dart
 import 'dart:typed_data';
+import 'dart:io';
+import 'dart:math' as math;
 import 'package:onnxruntime/onnxruntime.dart';
 import 'package:image/image.dart' as img;
 
@@ -470,7 +499,7 @@ class BlurDetector {
     
     // 6. Softmax
     final maxVal = outputData.reduce((a, b) => a > b ? a : b);
-    final expValues = outputData.map((v) => exp(v - maxVal)).toList();
+    final expValues = outputData.map((v) => math.exp(v - maxVal)).toList();
     final sum = expValues.reduce((a, b) => a + b);
     final probs = expValues.map((v) => v / sum).toList();
     
@@ -677,6 +706,7 @@ console.log(`检测结果: ${result.className}, 置信度: ${(result.confidence 
    - std = `[0.229, 0.224, 0.225]`
 5. **数据类型**: float32
 6. **输入形状**: `[1, 3, 224, 224]`
+7. **输出处理**: ONNX 输出是 logits，推理端对 4 个输出值执行一次 softmax，再取 argmax
 
 ---
 
@@ -695,7 +725,7 @@ console.log(`检测结果: ${result.className}, 置信度: ${(result.confidence 
 │   │   └── network.py          # MobileNetV3 模型
 │   ├── train.py                # 训练入口
 │   ├── evaluate.py             # 评估脚本
-│   └── export.py               # 导出 ONNX
+│   └── export.py               # 导出模型
 ├── include/blur_detection/     # C++ 头文件
 ├── src/                        # C++ 源文件
 ├── apps/main.cpp               # CLI 工具

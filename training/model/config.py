@@ -11,7 +11,7 @@ class Config:
     image_size: int = 224
     num_classes: int = 4
     class_names: List[str] = field(
-        default_factory=lambda: ["sharp", "motion_blur", "defocus_blur", "gaussian_blur"]
+        default_factory=lambda: ["defocus_blur", "gaussian_blur", "motion_blur", "sharp"]
     )
 
     # ── Training ─────────────────────────────────────────

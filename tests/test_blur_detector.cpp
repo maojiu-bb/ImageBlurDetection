@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <string>
 #include <vector>
 
 namespace {
@@ -208,14 +209,25 @@ TEST(InferenceEngineTest, CreateOnnxCaseInsensitive) {
 
 TEST(BlurDetectorTest, InvalidModelPath) {
     EXPECT_THROW(
-        blur::BlurDetector("/nonexistent/model.tflite", "tflite"),
+        blur::BlurDetector("/nonexistent/model.onnx", "onnx"),
         std::runtime_error
     );
 }
 
+TEST(BlurDetectorTest, DefaultBackendUsesOnnx) {
+    try {
+        blur::BlurDetector("/nonexistent/model.onnx");
+        FAIL() << "Expected construction to throw for a missing model";
+    } catch (const std::runtime_error& e) {
+        const std::string message = e.what();
+        EXPECT_NE(message.find("Failed to load model"), std::string::npos);
+        EXPECT_EQ(message.find("Unknown backend"), std::string::npos);
+    }
+}
+
 TEST(BlurDetectorTest, UnknownBackend) {
     EXPECT_THROW(
-        blur::BlurDetector("dummy.tflite", "unknown"),
+        blur::BlurDetector("dummy.onnx", "unknown"),
         std::runtime_error
     );
 }

@@ -37,11 +37,11 @@ struct BlurResult {
 class BlurDetector {
 public:
     /// Construct with a model file and backend type.
-    /// @param model_path  Path to .tflite or .onnx model file.
-    /// @param backend     "tflite" or "onnx".
+    /// @param model_path  Path to .onnx model file.
+    /// @param backend     Inference backend name. Currently supported: "onnx".
     /// @param input_size  Model input spatial size (default 224).
     BlurDetector(const std::string& model_path,
-                 const std::string& backend = "tflite",
+                 const std::string& backend = "onnx",
                  int input_size = 224);
 
     /// Detect blur in an image file.

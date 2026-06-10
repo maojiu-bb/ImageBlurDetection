@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -12,8 +13,8 @@ namespace fs = std::filesystem;
 void printUsage(const char* prog) {
     std::cout << "Usage: " << prog << " [options]\n"
               << "\nOptions:\n"
-              << "  --model <path>      Path to model file (.tflite or .onnx)\n"
-              << "  --backend <name>    Inference backend: tflite | onnx (default: tflite)\n"
+              << "  --model <path>      Path to ONNX model file (.onnx)\n"
+              << "  --backend <name>    Inference backend: onnx (default: onnx)\n"
               << "  --input <path>      Input image or directory\n"
               << "  --json              Output results as JSON\n"
               << "  --help              Show this help\n"
@@ -29,10 +30,10 @@ void printResult(const std::string& image_path, const blur::BlurResult& result, 
                   << "\"class_id\":" << static_cast<int>(result.predicted_class) << ","
                   << "\"confidence\":" << result.confidence << ","
                   << "\"probabilities\":{"
-                  << "\"sharp\":" << result.probabilities[0] << ","
-                  << "\"motion_blur\":" << result.probabilities[1] << ","
-                  << "\"defocus_blur\":" << result.probabilities[2] << ","
-                  << "\"gaussian_blur\":" << result.probabilities[3]
+                  << "\"defocus_blur\":" << result.probabilities[0] << ","
+                  << "\"gaussian_blur\":" << result.probabilities[1] << ","
+                  << "\"motion_blur\":" << result.probabilities[2] << ","
+                  << "\"sharp\":" << result.probabilities[3]
                   << "}}\n";
     } else {
         std::cout << image_path << ": "
@@ -48,7 +49,7 @@ void printResult(const std::string& image_path, const blur::BlurResult& result, 
 
 int main(int argc, char* argv[]) {
     std::string model_path;
-    std::string backend = "tflite";
+    std::string backend = "onnx";
     std::string input_path;
     bool json_output = false;
 

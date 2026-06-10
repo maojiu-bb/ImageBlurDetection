@@ -61,6 +61,8 @@ endif()
 
 # ── Google Test ──────────────────────────────────────────
 if(BLUR_DETECTION_BUILD_TESTS)
+    enable_testing()
+
     FetchContent_Declare(
         googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
@@ -97,7 +99,10 @@ endif()
 
 # ── Tests ────────────────────────────────────────────────
 if(BLUR_DETECTION_BUILD_TESTS)
-    add_executable(blur_detection_tests tests/test_blur_detector.cpp)
+    add_executable(blur_detection_tests
+        tests/test_blur_detector.cpp
+        tests/test_cli_format.cpp
+    )
     target_link_libraries(blur_detection_tests PRIVATE
         blur_detection_lib
         GTest::gtest_main
